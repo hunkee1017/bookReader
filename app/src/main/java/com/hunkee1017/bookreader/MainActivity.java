@@ -2,14 +2,17 @@ package com.hunkee1017.bookreader;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
-import android.view.View;
+
 import android.widget.TextView;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
+import androidx.core.widget.NestedScrollView;
+
 
 import com.google.android.material.appbar.CollapsingToolbarLayout;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
@@ -25,6 +28,12 @@ import java.util.Scanner;
 public class MainActivity extends AppCompatActivity {
 
     private static final int LOAD_FILE = 1;
+
+    private static final int LINE_PER_PAGE = 5000;
+
+    private String contents;
+
+    private Book book;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -42,6 +51,16 @@ public class MainActivity extends AppCompatActivity {
             intent.setAction(Intent.ACTION_GET_CONTENT);
             startActivityForResult(intent, 1);
         });
+
+        NestedScrollView contentScrolling = (NestedScrollView) findViewById(R.id.content_scrolling);
+
+        if(contentScrolling != null){
+            contentScrolling.setOnScrollChangeListener((NestedScrollView.OnScrollChangeListener) (v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+                if(!contentScrolling.canScrollVertically(1)){
+                    nextPageOfContents();
+                }
+            });
+        }
     }
 
     @Override
@@ -80,37 +99,66 @@ public class MainActivity extends AppCompatActivity {
         BookDatabase bookDatabase = BookDatabase.getInstance(getApplicationContext());
         final BookDao bookDao = bookDatabase.bookDao();
 
-        TextView contentView = (TextView) findViewById(R.id.content);
-        StringBuilder str = new StringBuilder(1024 * 50);
+        StringBuilder stringBuilder = new StringBuilder(1024 * 50);
 
         try (InputStream in = getContentResolver().openInputStream(data.getData())){
             Scanner scanner = new Scanner(in, "UTF-16LE");
-            Book book = bookDao.findByBookName(data.getData().getPath());
-            int bookLine = 0;
-            Book.Builder builder = new Book.Builder(data.getData().getPath()).line(bookLine);
-
-            if(book == null){
-                bookDao.insertBook(builder.builder());
-            }else{
-                bookLine = book.getLine();
-                bookDao.updateBook(builder.id(book.getId()).line(bookLine + 5000).builder());
-            }
-            int i = 0;
             while (scanner.hasNextLine()){
                 String line = scanner.nextLine();
-                i++;
-                if(i > bookLine) {
-                    contentView.append(line);
-                    contentView.append(System.getProperty("line.separator"));
-                }
-                if(i > bookLine + 5000){
-                    break;
-                }
+                stringBuilder.append(line);
+                stringBuilder.append(System.getProperty("line.separator"));
             }
+
+            contents = stringBuilder.toString();
+
+            String bookName = data.getData().getPath();
+            book = bookDao.findByBookName(bookName);
+
+
+            int contentLine = 0;
+
+            if(book == null){
+                bookDao.insertBook(new Book.Builder(data.getData().getPath())
+                        .line(contentLine)
+                        .builder());
+                book = bookDao.findByBookName(bookName);
+            }else{
+                contentLine = book.getLine();
+            }
+            TextView contentView = (TextView) findViewById(R.id.content);
+            contentView.append(contents, contentLine, (contents.length() >= contentLine + LINE_PER_PAGE) ? contentLine + LINE_PER_PAGE : contents.length() - 1);
         } catch (FileNotFoundException e) {
             e.printStackTrace();
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public void nextPageOfContents(){
+        TextView contentView = (TextView) findViewById(R.id.content);
+        int nextLine = book.getLine() + LINE_PER_PAGE;
+        contentView.append(contents, nextLine, (contents.length() >= nextLine + LINE_PER_PAGE) ? nextLine + LINE_PER_PAGE : contents.length() - 1);
+
+        updateBookLine(nextLine);
+    }
+
+    public void updateBookLine(int nextLine){
+        Book.Builder builder = new Book.Builder(book.getBookName())
+                .id(book.getId())
+                .line(nextLine);
+
+        BookDatabase bookDatabase = BookDatabase.getInstance(getApplicationContext());
+        BookDao bookDao = bookDatabase.bookDao();
+        bookDao.updateBook(builder.builder());
+
+        book = bookDao.findByBookName(book.getBookName());
+
+    }
+
+    @Override
+    protected void onDestroy() {
+        contents = null;
+        book = null;
+        super.onDestroy();
     }
 }
